@@ -43,7 +43,8 @@ interface IAthanasiaOtc {
      *
      * Parameters:
      *  - `collection` - NFT Collection address on behalf of which the OTC purchase is done.
-     *  - `amount` - amount of underlying tokens to purchase.
+     *  - `amountToPurchase` - amount of underlying tokens to purchase.
+     *  - `expectedCost` - total number of `otcToken` tokens that the caller expects to pay for the `amountToPurchase` underlying tokens.
      */
-    function otc(address collection, uint256 amount) external;
+    function otc(address collection, uint256 amountToPurchase, uint256 expectedCost) external payable;
 }

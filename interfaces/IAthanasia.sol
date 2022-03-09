@@ -32,12 +32,23 @@ interface IAthanasia {
     function initialize(address otcContract) external;
 
     /**
-     * @dev Registers or updates a collection with Athanasia.
+     * @dev Registers or updates a collection with Athanasia, with the intent to purchase underlying tokens via OTC contract.
      *
      * Requirements:
      *  - caller must be the collection itself, or the owner of the collection.
+     *  - `otcPrice` must not be zero
+     *  - `otcToken` may be null address, in which case native FTM token is used
      */
-    function registerCollection(address collection, address otcToken, uint256 otcPrice, uint256 depositAmount) external;
+    function registerCollectionWithOtc(address collection, address otcToken, uint256 otcPrice, uint256 depositAmount) external;
+
+    /**
+     * @dev Registers or updates a collection with Athanasia, with the intent to purchase underlying tokens via OTC contract.
+     *
+     * Requirements:
+     *  - caller must be the collection itself, or the owner of the collection.
+     *  - `depositAmount` must be positive
+     */
+    function registerCollection(address collection, uint256 depositAmount) external;
 
     /**
      * @dev Returns the number of tokens the owner of the `tokenId` from collection `collection` may withdraw.
@@ -67,7 +78,7 @@ interface IAthanasia {
      *  - `tokenId` must have had its initial balance deposited for.
      *  - caller must be the owner of the token
      */
-    function depositWithOtc(address collection, uint256[] memory tokenIds) external;
+    function depositWithOtc(address collection, uint256[] memory tokenIds) external payable;
 
     /**
      * @dev Deposit the initial value for multiple NFTs by depositing the underlying token directly.
