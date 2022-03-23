@@ -35,8 +35,8 @@ interface IAthanasia {
      * @dev Registers or updates a collection with Athanasia, with the intent to purchase underlying tokens via OTC contract.
      *
      * Requirements:
-     *  - caller must be the collection itself, or the owner of the collection.
-     *  - `otcPrice` must not be zero
+     *  - caller must be the collection itself, or the owner of the collection (collection must inherit Ownable contract).
+     *  - `otcPrice` must not be zero, represents the amount of underlying tokens deposited per NFT
      *  - `otcToken` may be null address, in which case native FTM token is used
      */
     function registerCollectionWithOtc(address collection, address otcToken, uint256 otcPrice, uint256 depositAmount) external;
@@ -45,10 +45,23 @@ interface IAthanasia {
      * @dev Registers or updates a collection with Athanasia, with the intent to purchase underlying tokens via OTC contract.
      *
      * Requirements:
-     *  - caller must be the collection itself, or the owner of the collection.
-     *  - `depositAmount` must be positive
+     *  - caller must be the collection itself, or the owner of the collection (collection must inherit Ownable contract).
+     *  - `depositAmount` must be positive, represents the amount of underlying tokens deposited per NFT
      */
     function registerCollection(address collection, uint256 depositAmount) external;
+
+    /**
+     * @dev Registers collection and immediately deposit all underlying tokens for the entire collection.
+     *
+     * This function allows already minted collections to onboard to Athanasia.
+     * Requirements:
+     *  - caller must be the collection itself, or the owner of the collection (collection must inherit Ownable contract).
+     *  - `collection` must implement IERC721Enumerable, this is required to check the token supply during claim / claimableBalance
+     *  - `depositAmount` must be positive, represents the amount of underlying tokens deposited per NFT
+     *  - `collectionSize` is the total collection size (or totalSupply if minting is complete)
+     *  - caller must have depositAmount * collectionSize of underlying tokens on balance
+     */
+    function registerCollectionAndDeposit(address collection, uint256 depositAmount, uint256 collectionSize) external;
 
     /**
      * @dev Returns the number of tokens the owner of the `tokenId` from collection `collection` may withdraw.

@@ -1,0 +1,22 @@
+dependencies:
+  - OpenZeppelin/openzeppelin-contracts@4.4.1
+compiler:
+  solc:
+    optimize: true
+    runs: 200
+    remappings:
+      - "@openzeppelin=OpenZeppelin/openzeppelin-contracts@4.4.1"
+dotenv: .env
+networks:
+  rinkeby:
+    hec_token: ""
+    shec_token: ""
+    hector_staking: ""
+    athanasia_hector_otc: ""
+    nft_contract: ""
+    verify_code: True
+  development:
+    verify_code: False
+wallets:
+  deployer: ${DEPLOYER_PRIVATE_KEY}
+  user: ${USER_PRIVATE_KEY}

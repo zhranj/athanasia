@@ -2,9 +2,10 @@
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/IERC721Enumerable.sol";
 import "../interfaces/IAthanasia.sol";
 import "../interfaces/IAthanasiaOtc.sol";
 
@@ -25,17 +26,17 @@ interface IHectorStaking {
  *
  * The best fit tokens are those that can be staked to earn rewards. The reward part can then be withdrawn by the NFT owner.
  */
-contract AthanasiaHector is IAthanasia, Ownable {
+contract AthanasiaHector is IAthanasia, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // ERC20 token address for $HEC token
-    address public hecToken;
+    IERC20 public immutable hecToken;
 
     // ERC20 token address for $sHEC token
-    address public shecToken;
+    IERC20 public immutable shecToken;
 
     // Hector Staking contract address
-    address public hecStakingContract;
+    IHectorStaking public immutable hecStakingContract;
 
     // Hector contract for selling over-the-counter HEC/sHEC token.
     address public hectorOtcContract;
@@ -46,11 +47,14 @@ contract AthanasiaHector is IAthanasia, Ownable {
     struct CollectionInfo {
         // The amount of HEC which will be deposited for each NFT minted.
         // This is the total amount purchased for each NFT via OTC contract.
+        // In case of registerDeposit, this denotes the total deposit amount for the entire collection
         uint256 depositAmount;
         // ERC20 token which will be used to purchase HEC in the OTC contract.
         address otcPurchaseToken;
         // OTC price for purchase of 1 HEC.
         uint256 otcPrice;
+        // If deposit on register is used, this value will be set to the current index at the time of deposit.
+        uint256 stakingIndexOnDeposit;
     }
 
     // Contains all registered collections.
@@ -64,11 +68,11 @@ contract AthanasiaHector is IAthanasia, Ownable {
      */
     constructor(address _hecToken, address _sHecToken, address _hecStakingContract) {
         require(_hecStakingContract != address(0), "staking contract");
-        hecStakingContract = _hecStakingContract;
+        hecStakingContract = IHectorStaking(_hecStakingContract);
         require(_hecToken != address(0), "HEC");
-        hecToken = _hecToken;
+        hecToken = IERC20(_hecToken);
         require(_sHecToken != address(0), "sHEC");
-        shecToken = _sHecToken;
+        shecToken = IERC20(_sHecToken);
     }
 
     /**
@@ -77,6 +81,7 @@ contract AthanasiaHector is IAthanasia, Ownable {
     function initialize(address _otcContract) external onlyOwner {
         require(_otcContract != address(0), "initialize: OTC contract");
         hectorOtcContract = _otcContract;
+        shecToken.approve(address(hecStakingContract), ~uint256(0));
     }
 
     /**
@@ -84,11 +89,13 @@ contract AthanasiaHector is IAthanasia, Ownable {
      */
     function registerCollectionWithOtc(address _collection, address _otcToken, uint256 _otcPrice, uint256 _depositAmount) external {
         require(msg.sender == _collection || msg.sender == Ownable(_collection).owner(), "Athanasia: Only collection owner may register the collection");
-        require(_depositAmount > 0, "Athanasia: Deposit amount null");
+        require(_depositAmount > 0, "Athanasia: Invalid deposit amount");
+        require(_otcPrice > 0, "Athanasia: Invalid OTC price");
+
         // Make sure the OTC was allowed by Hector team
         require(IAthanasiaOtc(hectorOtcContract).validateCollection(_collection, _otcToken, _otcPrice), "Athanasia: Collection not registered with OTC contract");
 
-        collections[_collection] = CollectionInfo(_depositAmount, _otcToken, _otcPrice);
+        collections[_collection] = CollectionInfo(_depositAmount, _otcToken, _otcPrice, 0);
 
         // Approve HEctor OTC contract so it can transfer OTC tokens over and give us sHEC
         if (_otcToken != address(0)) {  // if null address, use FTM
@@ -101,24 +108,57 @@ contract AthanasiaHector is IAthanasia, Ownable {
      */
     function registerCollection(address _collection, uint256 _depositAmount) external {
         require(msg.sender == _collection || msg.sender == Ownable(_collection).owner(), "Athanasia: Only collection owner may register the collection");
-        require(_depositAmount > 0, "Athanasia: Deposit amount null");
-        collections[_collection] = CollectionInfo(_depositAmount, address(0), 0);
+        require(_depositAmount > 0, "Athanasia: Invalid deposit amount");
+        collections[_collection] = CollectionInfo(_depositAmount, address(0), 0, 0);
+    }
+
+    /**
+     * @dev See {IAthanasia-registerCollectionAndDeposit}.
+     */
+    function registerCollectionAndDeposit(address _collection, uint256 _depositAmount, uint256 _collectionSize) external {
+        require(msg.sender == _collection || msg.sender == Ownable(_collection).owner(), "Athanasia: Only collection owner may register the collection");
+        require(_depositAmount > 0, "Athanasia: Invalid deposit amount");
+        require(IERC721Enumerable(_collection).totalSupply() <= _collectionSize, "Athanasia: Invalid collection size");
+        require(collections[_collection].depositAmount == 0, "Athanasia: Collection already registered");
+
+        collections[_collection] = CollectionInfo(_depositAmount * _collectionSize, address(0), 0, hecStakingContract.index());
+
+        shecToken.safeTransferFrom(msg.sender, address(this), _depositAmount * _collectionSize);
     }
 
     function _claimableBalance(address _collection, uint256 _tokenId) internal view returns (uint256 withdrawable) {
         // Check that the collection exists
-        uint256 hecAmountPerNft = collections[_collection].depositAmount;
-        require(hecAmountPerNft > 0, "Athanasia: Collection not registered");
-        // Token must be deposited. If deposited, we would have recorded the staking index at the time.
-        require(stakingIndexes[_collection][_tokenId] > 0, "Athanasia: No deposit for token");
-
-        uint256 currentIndex = IHectorStaking(hecStakingContract).index();
-        uint256 lastIndex = stakingIndexes[_collection][_tokenId];
-        if (lastIndex >= currentIndex) {
+        CollectionInfo memory collection = collections[_collection];
+        if (collections[_collection].depositAmount == 0) {
+            // Collection not registered
             return 0;
         }
 
-        return (currentIndex - lastIndex) * hecAmountPerNft / lastIndex;
+        uint256 hecDepositPerNft = collection.depositAmount;
+
+        // For collections where underlying tokens were not deposited during registration,
+        // the deposit must be made explicitly, during which the staking index is recorded.
+        if (collection.stakingIndexOnDeposit == 0) {
+            if(stakingIndexes[_collection][_tokenId] == 0) {
+                // No deposits were made
+                return 0;
+            }
+        } else {
+            hecDepositPerNft /= IERC721Enumerable(_collection).totalSupply();
+        }
+
+        uint256 currentIndex = hecStakingContract.index();
+        uint256 indexAtLastWithdrawal = stakingIndexes[_collection][_tokenId];
+        if (indexAtLastWithdrawal == 0) {
+            indexAtLastWithdrawal = collection.stakingIndexOnDeposit;
+        }
+
+        if (indexAtLastWithdrawal >= currentIndex) {
+            // No rebases happened
+            return 0;
+        }
+
+        return (currentIndex - indexAtLastWithdrawal) * hecDepositPerNft / indexAtLastWithdrawal;
     }
 
     /**
@@ -133,17 +173,34 @@ contract AthanasiaHector is IAthanasia, Ownable {
      */
     function claim(address _collection, uint256[] memory _tokenIds) external {
         uint256 totalClaimable = 0;
+        uint256 currentIndex = hecStakingContract.index();
         for (uint256 i = 0; i < _tokenIds.length; ++i) {
-            require(IERC721(_collection).ownerOf(_tokenIds[i]) == msg.sender, "Athanasia: Caller not the owner of token");
+            require(IERC721Enumerable(_collection).ownerOf(_tokenIds[i]) == msg.sender, "Athanasia: Not owner");
             totalClaimable += _claimableBalance(_collection, _tokenIds[i]);
+            stakingIndexes[_collection][_tokenIds[i]] = currentIndex;
         }
 
         if (totalClaimable > 0) {
             // Unstake the amount being claimed.
-            IHectorStaking(hecStakingContract).unstake(totalClaimable, false);
+            hecStakingContract.unstake(totalClaimable, false);
 
             // Send the HEC to the caller
-            IERC20(hecToken).safeTransfer(msg.sender, totalClaimable);
+            hecToken.safeTransfer(msg.sender, totalClaimable);
+        }
+    }
+
+    function _updateStakingIndexes(address _collection, uint256[] memory _tokenIds) internal {
+        // Check that the collection exists
+        uint256 hecAmountPerNft = collections[_collection].depositAmount;
+        require(hecAmountPerNft > 0, "Athanasia: Collection not registered");
+
+        uint256 currentIndex = hecStakingContract.index();
+        for (uint256 i = 0; i < _tokenIds.length; ++i) {
+            // Token must exist
+            require(IERC721Enumerable(_collection).ownerOf(_tokenIds[i]) != address(0), "Athanasia: nonexistent token");
+            // Token must not already be deposited
+            require(stakingIndexes[_collection][_tokenIds[i]] == 0, "Athanasia: Token already deposited");
+            stakingIndexes[_collection][_tokenIds[i]] = currentIndex;
         }
     }
 
@@ -151,35 +208,17 @@ contract AthanasiaHector is IAthanasia, Ownable {
      * @dev See {IAthanasia-deposit}.
      */
     function deposit(address _collection, uint256[] memory _tokenIds) external {
-        // Check that the collection exists
-        uint256 hecAmountPerNft = collections[_collection].depositAmount;
-        require(hecAmountPerNft > 0, "Athanasia: Collection not registered");
-
-        uint256 currentIndex = IHectorStaking(hecStakingContract).index();
-        for (uint256 i = 0; i < _tokenIds.length; ++i) {
-            // Token must not already be deposited
-            require(stakingIndexes[_collection][_tokenIds[i]] == 0, "Athanasia: Token already deposited");
-            stakingIndexes[_collection][_tokenIds[i]] = currentIndex;
-        }
-
-        IERC20(shecToken).safeTransferFrom(msg.sender, address(this), _tokenIds.length * hecAmountPerNft);
+        _updateStakingIndexes(_collection, _tokenIds);
+        shecToken.safeTransferFrom(msg.sender, address(this), _tokenIds.length * collections[_collection].depositAmount);
     }
 
     /**
      * @dev See {IAthanasia-depositWithOtc}.
      */
-    function depositWithOtc(address _collection, uint256[] memory _tokenIds) external payable {
-        // Check that the collection exists
+    function depositWithOtc(address _collection, uint256[] memory _tokenIds) external payable nonReentrant {
+        _updateStakingIndexes(_collection, _tokenIds);
+
         uint256 hecAmountPerNft = collections[_collection].depositAmount;
-        require(hecAmountPerNft > 0, "Athanasia: Collection not registered");
-
-        uint256 currentIndex = IHectorStaking(hecStakingContract).index();
-        for (uint256 i = 0; i < _tokenIds.length; ++i) {
-            // Token must not already be deposited
-            require(stakingIndexes[_collection][_tokenIds[i]] == 0, "Athanasia: Token already deposited");
-            stakingIndexes[_collection][_tokenIds[i]] = currentIndex;
-        }
-
         uint256 totalAmountForOtc = _tokenIds.length * collections[_collection].otcPrice * hecAmountPerNft / ONE_HECTOR;
 
         // First, transfer the tokens to this smart contract
@@ -193,7 +232,7 @@ contract AthanasiaHector is IAthanasia, Ownable {
         else {
             // OTC done in custom ERC20 token
             IERC20(collections[_collection].otcPurchaseToken).safeTransferFrom(msg.sender, address(this), totalAmountForOtc);
-            // Call OTC contract to perfomr OTC buy
+            // Call OTC contract to perform OTC buy
             IAthanasiaOtc(hectorOtcContract).otc(_collection, _tokenIds.length * hecAmountPerNft, totalAmountForOtc);
         }
     }

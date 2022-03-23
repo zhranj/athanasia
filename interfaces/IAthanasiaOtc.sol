@@ -36,7 +36,7 @@ interface IAthanasiaOtc {
      *
      * @return true of the registration data matches the parameters.
      */
-    function validateCollection(address collection, address otcToken, uint256 otcPrice) external returns(bool);
+    function validateCollection(address collection, address otcToken, uint256 otcPrice) external view returns(bool);
 
     /**
      * @dev Perform OTC purchase of `amount` amount of the underlying token, using the price and token type as registered for the collection.
