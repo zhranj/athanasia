@@ -146,7 +146,6 @@ def test_register_with_otc_succeeds_for_deployer_when_everything_ok(athanasia, o
         10 * ONE_FTM,
         10_000 * ONE_HECTOR,
         {"from": deployer})
-
     athanasia.registerCollectionWithOtc(
         nft.address,
         otc_token,
@@ -163,13 +162,73 @@ def test_register_with_otc_succeeds_for_nft_collection_when_everything_ok(athana
         10 * ONE_FTM,
         10_000 * ONE_HECTOR,
         {"from": deployer})
-
     athanasia.registerCollectionWithOtc(
         deployer.address,
         otc_token,
         10 * ONE_FTM,
         ONE_HECTOR,
         {"from": deployer})
+
+
+def test_register_with_otc_succeeds_reregister_before_deposit(athanasia, otc, nft, deployer):
+    otc_token = "0x0000000000000000000000000000000000000000"
+    otc.registerCollection(
+        deployer.address,
+        otc_token,
+        10 * ONE_FTM,
+        10_000 * ONE_HECTOR,
+        {"from": deployer})
+    athanasia.registerCollectionWithOtc(
+        deployer.address,
+        otc_token,
+        10 * ONE_FTM,
+        ONE_HECTOR,
+        {"from": deployer})
+    otc.registerCollection(
+        deployer.address,
+        otc_token,
+        20 * ONE_FTM,
+        10_000 * ONE_HECTOR,
+        {"from": deployer})
+    athanasia.registerCollectionWithOtc(
+        deployer.address,
+        otc_token,
+        20 * ONE_FTM,
+        ONE_HECTOR,
+        {"from": deployer})
+    # Check if otcPrice was updated
+    assert athanasia.collections(deployer.address)[2] == 20 * ONE_FTM
+
+
+def test_register_with_otc_fail_reregister_after_deposit(athanasia, otc, nft, deployer, user):
+    otc_token = "0x0000000000000000000000000000000000000000"
+    otc.registerCollection(
+        nft.address,
+        otc_token,
+        5 * ONE_FTM,
+        10_000 * ONE_HECTOR,
+        {"from": deployer})
+    athanasia.registerCollectionWithOtc(
+        nft.address,
+        otc_token,
+        5 * ONE_FTM,
+        ONE_HECTOR,
+        {"from": deployer})
+    athanasia.depositWithOtc(nft.address, [1], {"from": user, "amount": 5 * ONE_FTM})
+    otc.registerCollection(
+        nft.address,
+        otc_token,
+        10 * ONE_FTM,
+        10_000 * ONE_HECTOR,
+        {"from": deployer})
+
+    with brownie.reverts("Athanasia: Update not possible after deposit have been made"):
+        athanasia.registerCollectionWithOtc(
+            nft.address,
+            otc_token,
+            10 * ONE_FTM,
+            ONE_HECTOR,
+            {"from": deployer})
 
 
 def test_register_collection_fails_for_unauthorized_owner(athanasia, nft, user):
@@ -188,6 +247,23 @@ def test_register_collection_succeeds_for_nft_owner(athanasia, nft, deployer):
 
 def test_register_collection_succeeds_for_nft_collection(athanasia, nft, deployer):
     athanasia.registerCollection(deployer.address, ONE_HECTOR, {"from": deployer})
+
+
+def test_register_collection_succeeds_reregistration(athanasia, nft, deployer):
+    athanasia.registerCollection(deployer.address, ONE_HECTOR, {"from": deployer})
+    athanasia.registerCollection(deployer.address, 2 * ONE_HECTOR, {"from": deployer})
+
+    assert athanasia.collections(deployer.address)[0] == 2 * ONE_HECTOR
+
+
+def test_register_collection_fails_reregistration_after_deposit(athanasia, nft, shec, deployer, user):
+    shec.approve(athanasia.address, 1000*ONE_HECTOR, {"from": user})
+    shec.mint(user, ONE_HECTOR)
+    athanasia.registerCollection(nft.address, ONE_HECTOR, {"from": deployer})
+    athanasia.deposit(nft.address, [1], {"from": user})
+
+    with brownie.reverts("Athanasia: Update not possible after deposit have been made"):
+        athanasia.registerCollection(nft.address, 2 * ONE_HECTOR, {"from": deployer})
 
 
 def test_deposit_fails_when_collection_not_registered(athanasia, nft, user):
@@ -411,7 +487,6 @@ def test_claim_double_claim_does_nothing(athanasia_deposited, nft, hec, hec_stak
 
 
 def test_claim_twice_rebase_between(athanasia_deposited, nft, hec, hec_staking, user):
-    print("index is ", hec_staking.index())
     balance_before = hec.balanceOf(user)
 
     hec_staking.rebase(1.2 * ONE_HECTOR)
@@ -424,7 +499,6 @@ def test_claim_twice_rebase_between(athanasia_deposited, nft, hec, hec_staking, 
 
 
 def test_claim_twice_rebase_between_two_nfts(athanasia_deposited, nft, hec, hec_staking, user):
-    print("index is ", hec_staking.index())
     balance_before = hec.balanceOf(user)
 
     hec_staking.rebase(1.2 * ONE_HECTOR)
@@ -454,3 +528,159 @@ def test_claim_thrice_rebase_between_three_nfts(athanasia_deposited, nft, hec, s
         871617000 +\
         891617000 +\
         1074534440
+
+
+def test_register_and_deposit_fails_for_invalid_caller(athanasia, nft, user, deployer):
+    with brownie.reverts("Athanasia: Only collection owner may register the collection"):
+        athanasia.registerCollectionAndDeposit(nft.address, ONE_HECTOR, 1000, {"from": user})
+
+
+def test_register_and_deposit_fails_for_invalid_deposit_amount(athanasia, nft, deployer):
+    with brownie.reverts("Athanasia: Invalid deposit amount"):
+        athanasia.registerCollectionAndDeposit(nft.address, 0, 1000, {"from": deployer})
+
+
+def test_register_and_deposit_fails_for_zero_collection_size(athanasia, nft, deployer):
+    with brownie.reverts("Athanasia: Invalid collection size"):
+        athanasia.registerCollectionAndDeposit(nft.address, ONE_HECTOR, 0, {"from": deployer})
+
+
+def test_register_and_deposit_succeeds_for_nft_owner(athanasia, nft, deployer, shec, hec_staking):
+    shec.approve(athanasia.address, 1000 * ONE_HECTOR, {"from": deployer})
+    shec.mint(deployer, 1000 * ONE_HECTOR, {"from": deployer})
+    athanasia.registerCollectionAndDeposit(nft.address, ONE_HECTOR, 1000, {"from": deployer})
+    assert athanasia.collections(nft.address)[0] == ONE_HECTOR
+    assert athanasia.collections(nft.address)[1] == "0x0000000000000000000000000000000000000000"
+    assert athanasia.collections(nft.address)[2] == 0
+    assert athanasia.collections(nft.address)[3] == hec_staking.index()
+    assert athanasia.collections(nft.address)[4] == 1000
+
+
+def test_register_and_deposit_succeeds_for_nft_collection(athanasia, nft, deployer, shec, hec_staking):
+    shec.approve(athanasia.address, 1000 * ONE_HECTOR, {"from": deployer})
+    shec.mint(deployer, 1000 * ONE_HECTOR, {"from": deployer})
+    athanasia.registerCollectionAndDeposit(deployer, ONE_HECTOR, 1000, {"from": deployer})
+    assert athanasia.collections(deployer)[0] == ONE_HECTOR
+    assert athanasia.collections(deployer)[1] == "0x0000000000000000000000000000000000000000"
+    assert athanasia.collections(deployer)[2] == 0
+    assert athanasia.collections(deployer)[3] == hec_staking.index()
+    assert athanasia.collections(deployer)[4] == 1000
+
+
+def test_register_and_deposit_fails_reregistration(athanasia, nft, deployer, shec):
+    shec.approve(athanasia.address, 1000 * ONE_HECTOR, {"from": deployer})
+    shec.mint(deployer, 1000 * ONE_HECTOR, {"from": deployer})
+    athanasia.registerCollectionAndDeposit(nft.address, ONE_HECTOR, 1000, {"from": deployer})
+    with brownie.reverts("Athanasia: Collection already registered"):
+        athanasia.registerCollectionAndDeposit(nft.address, ONE_HECTOR, 1000, {"from": deployer})
+
+
+@pytest.fixture(scope="function", autouse=False)
+def athanasia_rd(athanasia, nft, deployer, shec):
+    shec.approve(athanasia.address, 10000 * ONE_HECTOR, {"from": deployer})
+    shec.mint(deployer, 10000 * ONE_HECTOR, {"from": deployer})
+    athanasia.registerCollectionAndDeposit(nft.address, ONE_HECTOR, 10000, {"from": deployer})
+    yield athanasia
+
+
+def test_rd_claim_returns_based_on_deposited_supply(athanasia_rd, nft, user, hec, hec_staking):
+    hec_staking.rebase(1.1 * ONE_HECTOR)
+    balance_before = hec.balanceOf(user)
+
+    athanasia_rd.claim(nft.address, [1], {"from": user})
+
+    assert hec.balanceOf(user) == balance_before + ONE_HECTOR * 0.1
+
+
+@pytest.mark.parametrize("nft_id", [0, 1001])
+def test_rd_claimable_balance_return_zero_token_out_of_range(athanasia_rd, nft, user, hec, hec_staking, nft_id):
+    hec_staking.rebase(1.1 * ONE_HECTOR)
+    assert athanasia_rd.claimableBalance(nft.address, nft_id, {"from": user}) == 0
+
+
+def test_rd_claim_fails_when_token_not_minted(athanasia_rd, nft, user):
+    with brownie.reverts("ERC721: owner query for nonexistent token"):
+        athanasia_rd.claim(nft.address, [100], {"from": user})
+
+
+def test_rd_claim_fails_when_caller_not_owner(athanasia_rd, nft, user):
+    with brownie.reverts("Athanasia: Not owner"):
+        athanasia_rd.claim(nft.address, [1337], {"from": user})
+
+
+def test_rd_claim_zero_when_no_rebases(athanasia_rd, nft, hec, user):
+    balance_before = hec.balanceOf(user)
+
+    athanasia_rd.claim(nft.address, [1], {"from": user})
+
+    assert hec.balanceOf(user) == balance_before
+
+
+def test_rd_claim_single_after_one_rebase(athanasia_rd, nft, hec, hec_staking, user):
+    hec_staking.rebase(1.2 * ONE_HECTOR)
+    balance_before = hec.balanceOf(user)
+
+    athanasia_rd.claim(nft.address, [1], {"from": user})
+
+    assert hec.balanceOf(user) == balance_before + 0.2 * ONE_HECTOR
+
+
+def test_rd_claim_double_claim_does_nothing(athanasia_rd, nft, hec, hec_staking, user):
+    hec_staking.rebase(1.2 * ONE_HECTOR)
+    balance_before = hec.balanceOf(user)
+
+    athanasia_rd.claim(nft.address, [1], {"from": user})
+    athanasia_rd.claim(nft.address, [1], {"from": user})
+
+    # (1.2/1.0 - 1)
+    assert hec.balanceOf(user) == balance_before + 0.2 * ONE_HECTOR
+
+
+def test_rd_claim_twice_rebase_between(athanasia_rd, nft, hec, hec_staking, user):
+    balance_before = hec.balanceOf(user)
+
+    hec_staking.rebase(1.2 * ONE_HECTOR)
+    athanasia_rd.claim(nft.address, [1], {"from": user})
+    hec_staking.rebase(1.2 * ONE_HECTOR)
+    athanasia_rd.claim(nft.address, [1], {"from": user})
+
+    # (1.2/1.0 - 1) + (1.2*1.2/1.2 - 1)
+    assert hec.balanceOf(user) == balance_before + 0.2 * ONE_HECTOR * 2
+
+
+def test_rd_claim_twice_rebase_between_two_nfts(athanasia_rd, nft, hec, hec_staking, user):
+    balance_before = hec.balanceOf(user)
+
+    hec_staking.rebase(1.2 * ONE_HECTOR)
+    athanasia_rd.claim(nft.address, [1], {"from": user})
+    hec_staking.rebase(1.3 * ONE_HECTOR)
+    athanasia_rd.claim(nft.address, [1, 18], {"from": user})
+
+    # (1.2/1.0 - 1) + (1.3*1.2/1.2 - 1) + (1.2*1.3/1.0 - 1)
+    assert hec.balanceOf(user) == balance_before + 0.5 * ONE_HECTOR + 560000000
+
+
+def test_rd_claim_thrice_rebase_between_three_nfts(athanasia_rd, nft, hec, shec, hec_staking, user, deployer):
+    # NOTE that rebase does not actually update the balance of athanasia, as it should.
+    # If needed in the future, perhaps it would be wise to implement properly in the mock.
+    # athanasia_rd.claim(nft.address, [1, 18, 9272], {"from": user})
+
+    balance_before = hec.balanceOf(user)
+
+    hec_staking.rebase(1200000000)
+    athanasia_rd.claim(nft.address, [1], {"from": user})
+    assert hec.balanceOf(user) == balance_before + 0.2 * ONE_HECTOR
+
+    hec_staking.rebase(1100000000)
+    athanasia_rd.claim(nft.address, [1, 18], {"from": user})
+    assert hec.balanceOf(user) == balance_before + 0.3 * ONE_HECTOR + 0.32 * ONE_HECTOR
+
+    hec_staking.rebase(1571617000)
+    athanasia_rd.claim(nft.address, [1, 18], {"from": user})
+    assert hec.balanceOf(user) == balance_before + 0.62 * ONE_HECTOR + 2 * 0.571617000 * ONE_HECTOR
+
+    athanasia_rd.claim(nft.address, [9272], {"from": user})
+    # NFT #1   : (1.2/1.0 - 1) + (1.2*1.1/1.2 - 1) + (1.2*1.1*1.571617/(1.2*1.1) - 1) = 0.2 + 0.1 + 0.571617
+    # NFT #18  : (1.2*1.1/1.0 - 1) + (1.2*1.1*1.571617/(1.2*1.1) - 1) = 0.32 + 0.571617
+    # NFT #9272: (1.2*1.1*1.571617/1.0 - 1) = 1.07453444
+    assert hec.balanceOf(user) == balance_before + 871617000 + 891617000 + 1074534440

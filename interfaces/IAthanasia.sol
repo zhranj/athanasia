@@ -60,6 +60,9 @@ interface IAthanasia {
      *  - `depositAmount` must be positive, represents the amount of underlying tokens deposited per NFT
      *  - `collectionSize` is the total collection size (or totalSupply if minting is complete)
      *  - caller must have depositAmount * collectionSize of underlying tokens on balance
+     *
+     * Collection information can be updated, but only to make deposits for new NFTs. E.g. first register deposits HEC for 1000
+     * NFTs. We can do another call later to deposit for up to 2000 NFTs. The second call would deposit HEC for another 1000 NFTs.
      */
     function registerCollectionAndDeposit(address collection, uint256 depositAmount, uint256 collectionSize) external;
 
