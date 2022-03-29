@@ -41,6 +41,9 @@ contract AthanasiaHector is IAthanasia, Ownable, ReentrancyGuard {
     // Hector contract for selling over-the-counter HEC/sHEC token.
     address public hectorOtcContract;
 
+    // Address of the V2 AthanasiaHector contract.
+    address public v2contract;
+
     // Number of tokens in 1 HEC / sHEC
     uint256 public immutable ONE_HECTOR = 10**9;
 
@@ -63,7 +66,9 @@ contract AthanasiaHector is IAthanasia, Ownable, ReentrancyGuard {
     mapping(address => CollectionInfo) public collections;
 
     // Tracks the staking indexes for each NFT in each collection at last withdrawal.
-    mapping(address => mapping(uint256 => uint256)) stakingIndexes;
+    mapping(address => mapping(uint256 => uint256)) public stakingIndexes;
+
+    mapping(address => mapping(uint256 => bool)) public upgradeStatus;
 
     /**
      * @dev Initializes the contract by setting `hecToken` and `shecToken` token addresses and the `hecStakingContract` address.
@@ -138,11 +143,40 @@ contract AthanasiaHector is IAthanasia, Ownable, ReentrancyGuard {
         shecToken.safeTransferFrom(msg.sender, address(this), _depositAmount * _collectionSize);
     }
 
+    /**
+     * @dev See {IAthanasia-registerCollectionAndDepositWithOtc}.
+     */
+    function registerCollectionAndDepositWithOtc(address _collection, uint256 _depositAmount, uint256 _collectionSize, address _otcToken, uint256 _otcPrice) external payable {
+        require(msg.sender == _collection || msg.sender == Ownable(_collection).owner(), "Athanasia: Only collection owner may register the collection");
+        require(_depositAmount > 0, "Athanasia: Invalid deposit amount");
+        require(_collectionSize > 0, "Athanasia: Invalid collection size");
+        require(collections[_collection].depositAmount == 0, "Athanasia: Collection already registered");
+
+        require(IAthanasiaOtc(hectorOtcContract).validateCollection(_collection, _otcToken, _otcPrice), "Athanasia: Collection not registered with OTC contract");
+
+        collections[_collection] = CollectionInfo(_depositAmount, _otcToken, _otcPrice, hecStakingContract.index(), _collectionSize);
+
+        uint256 totalAmountForOtc = _collectionSize * _otcPrice * _depositAmount / ONE_HECTOR;
+        if (_otcToken != address(0)) {
+            IERC20(_otcToken).safeTransferFrom(msg.sender, address(this), totalAmountForOtc);
+            IERC20(_otcToken).approve(hectorOtcContract, ~uint256(0));
+            IAthanasiaOtc(hectorOtcContract).otc(_collection, _collectionSize * _depositAmount, totalAmountForOtc);
+        } else {
+            require(msg.value >= totalAmountForOtc, "Athanasia: Insufficient FTM funds for OTC");
+            IAthanasiaOtc(hectorOtcContract).otc{value: totalAmountForOtc}(_collection, _collectionSize * _depositAmount, totalAmountForOtc);
+        }
+    }
+
     function _claimableBalance(address _collection, uint256 _tokenId) internal view returns (uint256 withdrawable) {
         // Check that the collection exists
         CollectionInfo memory collection = collections[_collection];
         if (collections[_collection].depositAmount == 0) {
             // Collection not registered
+            return 0;
+        }
+
+        // Token upgraded
+        if (upgradeStatus[_collection][_tokenId]) {
             return 0;
         }
 
@@ -189,6 +223,7 @@ contract AthanasiaHector is IAthanasia, Ownable, ReentrancyGuard {
         uint256 currentIndex = hecStakingContract.index();
         for (uint256 i = 0; i < _tokenIds.length; ++i) {
             require(IERC721(_collection).ownerOf(_tokenIds[i]) == msg.sender, "Athanasia: Not owner");
+            require(upgradeStatus[_collection][_tokenIds[i]] == false, "Athanasia: Some already upgraded");
             totalClaimable += _claimableBalance(_collection, _tokenIds[i]);
             stakingIndexes[_collection][_tokenIds[i]] = currentIndex;
         }
@@ -247,5 +282,38 @@ contract AthanasiaHector is IAthanasia, Ownable, ReentrancyGuard {
             // Call OTC contract to perform OTC buy
             IAthanasiaOtc(hectorOtcContract).otc(_collection, _tokenIds.length * info.depositAmount, totalAmountForOtc);
         }
+    }
+
+    /**
+     * @dev See {IAthanasia-setUpgradeAddress}.
+     */
+    function setUpgradeAddress(address _contractAddress) external onlyOwner {
+        v2contract = _contractAddress;
+    }
+
+    /**
+     * @dev See {IAthanasia-upgrade}.
+     */
+    function upgrade(address _collection, uint256[] memory _tokenIds) external {
+        require(v2contract != address(0), "Athanasia: Upgrade unavailable");
+        uint256 currentIndex = hecStakingContract.index();
+        for (uint256 i = 0; i < _tokenIds.length; ++i) {
+            require(IERC721(_collection).ownerOf(_tokenIds[i]) == msg.sender, "Athanasia: Only NFT owner can upgrade");
+            require(collections[_collection].stakingIndexOnDeposit == currentIndex || stakingIndexes[_collection][_tokenIds[i]] == currentIndex, "Athanasia: Must claim before upgrade");
+            require(upgradeStatus[_collection][_tokenIds[i]] == false, "Athanasia: Some already upgraded");
+            upgradeStatus[_collection][_tokenIds[i]] = true;
+        }
+
+        shecToken.safeTransfer(v2contract, collections[_collection].depositAmount * _tokenIds.length);
+
+        require(IAthanasia(v2contract).upgradeTo(msg.sender, _collection, _tokenIds), "Athanasia: Upgrade failed in V2");
+    }
+
+    /**
+     * @dev See {IAthanasia-upgradeTo}.
+     */
+    function upgradeTo(address _tokenOwner, address _collection, uint256[] memory _tokenIds) external returns (bool) {
+        // this is V1
+        return false;
     }
 }

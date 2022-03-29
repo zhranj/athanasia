@@ -56,15 +56,26 @@ interface IAthanasia {
      * This function allows already minted collections to onboard to Athanasia.
      * Requirements:
      *  - caller must be the collection itself, or the owner of the collection (collection must inherit Ownable contract).
-     *  - `collection` must implement IERC721Enumerable, this is required to check the token supply during claim / claimableBalance
      *  - `depositAmount` must be positive, represents the amount of underlying tokens deposited per NFT
      *  - `collectionSize` is the total collection size (or totalSupply if minting is complete)
      *  - caller must have depositAmount * collectionSize of underlying tokens on balance
-     *
-     * Collection information can be updated, but only to make deposits for new NFTs. E.g. first register deposits HEC for 1000
-     * NFTs. We can do another call later to deposit for up to 2000 NFTs. The second call would deposit HEC for another 1000 NFTs.
      */
     function registerCollectionAndDeposit(address collection, uint256 depositAmount, uint256 collectionSize) external;
+
+    /**
+     * @dev Registers collection and immediately perform an OTC purchase for all underlying tokens for the entire collection
+     *  using the specified otcToken and otcPrice.
+     *
+     * This function allows already minted collections to onboard to Athanasia.
+     * Requirements:
+     *  - caller must be the collection itself, or the owner of the collection (collection must inherit Ownable contract).
+     *  - collection must be registered with OTC contract with exact same OTC token and OTC price, and the OTC amount
+     *  - `depositAmount` must be positive, represents the amount of underlying tokens deposited per NFT
+     *  - `collectionSize` is the total collection size (or totalSupply if minting is complete)
+     *  - caller must have depositAmount * collectionSize * otcPrice / 10^9 of OTC tokens on balance and must have approved
+     *       the athanasia contract to transfer the tokens
+     */
+    function registerCollectionAndDepositWithOtc(address collection, uint256 depositAmount, uint256 collectionSize, address otcToken, uint256 otcPrice) external payable;
 
     /**
      * @dev Returns the number of tokens the owner of the `tokenId` from collection `collection` may withdraw.
@@ -105,4 +116,38 @@ interface IAthanasia {
      *  - caller must be the owner of the token
      */
     function deposit(address collection, uint256[] memory tokenIds) external;
+
+    /**
+     * @dev Set the address of the upgraded contract. NFT holders may choose to stay on the
+     * current version or to upgrade.
+     */
+    function setUpgradeAddress(address contractAddress) external;
+
+    /**
+     * @dev Upgrade NFTs from specific collection to the new smart contract version.
+     *
+     * Requirements:
+     *  - callably only by the NFT owner.
+     *  - upgrade contract must have been set.
+     *
+     * Consequences:
+     *  - earning state is transfered to the new smart contract.
+     *  - upon success, will not allow NFT owner to claim on this smart contract any more.
+     *  - depending on implementation, may also claim any available earnings for the caller.
+     *  - upgrade is not reversible.
+     */
+    function upgrade(address collection, uint256[] memory tokenIds) external;
+
+    /**
+     * @dev Onboard NFTs from specific collection from previous contract version to this one.
+     *
+     * Requirements:
+     *  - callable only by previous contract version, on behalf of the token owner
+     *  - needs to be implemented only by the V2+ contracts.
+     *
+     * Flow:
+     *  User calls V1.upgrade() which in turns calls V2.upgradeTo(). From then on, V2 is the active
+     *  Athanasia contract for the tokens passed.
+     */
+    function upgradeTo(address tokenOwner, address collection, uint256[] memory tokenIds) external returns (bool);
 }
